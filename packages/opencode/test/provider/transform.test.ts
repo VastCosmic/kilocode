@@ -2737,3 +2737,157 @@ describe("ProviderTransform.variants", () => {
   })
 })
 // kilocode_change end
+
+// kilocode_change start - tests for Claude 4.6 prefill fix
+describe("ProviderTransform.supportsAssistantPrefill", () => {
+  const model = (apiId: string) => ({ api: { id: apiId } }) as any
+
+  test("returns false for claude opus 4.6", () => {
+    expect(ProviderTransform.supportsAssistantPrefill(model("claude-opus-4.6-20250601"))).toBe(false)
+    expect(ProviderTransform.supportsAssistantPrefill(model("claude-opus-4-6-20250601"))).toBe(false)
+  })
+
+  test("returns false for claude sonnet 4.6", () => {
+    expect(ProviderTransform.supportsAssistantPrefill(model("claude-sonnet-4.6-20260101"))).toBe(false)
+    expect(ProviderTransform.supportsAssistantPrefill(model("claude-sonnet-4-6-20260101"))).toBe(false)
+  })
+
+  test("returns true for claude sonnet 4.5 (prefill still supported)", () => {
+    expect(ProviderTransform.supportsAssistantPrefill(model("claude-sonnet-4.5-20250514"))).toBe(true)
+    expect(ProviderTransform.supportsAssistantPrefill(model("claude-sonnet-4-5-20250514"))).toBe(true)
+  })
+
+  test("returns true for claude sonnet 4", () => {
+    expect(ProviderTransform.supportsAssistantPrefill(model("claude-sonnet-4-20250514"))).toBe(true)
+  })
+
+  test("returns true for claude 3.5 sonnet", () => {
+    expect(ProviderTransform.supportsAssistantPrefill(model("claude-3-5-sonnet-20241022"))).toBe(true)
+  })
+
+  test("returns true for non-claude models", () => {
+    expect(ProviderTransform.supportsAssistantPrefill(model("gpt-5.4"))).toBe(true)
+    expect(ProviderTransform.supportsAssistantPrefill(model("gemini-3-pro"))).toBe(true)
+  })
+
+  test("handles case-insensitive model IDs", () => {
+    expect(ProviderTransform.supportsAssistantPrefill(model("Claude-Opus-4.6-20250601"))).toBe(false)
+    expect(ProviderTransform.supportsAssistantPrefill(model("CLAUDE-SONNET-4-6-20260101"))).toBe(false)
+  })
+})
+
+describe("ProviderTransform.message - fix trailing assistant for Claude 4.6", () => {
+  const claudeModel = (apiId: string, npm = "@ai-sdk/anthropic", providerID = "anthropic"): any => ({
+    id: `${'${providerID}/${apiId}'}`,
+    providerID,
+    api: { id: apiId, npm, url: "" },
+    name: apiId,
+    family: "claude",
+    release_date: "2026-01-01",
+    capabilities: {
+      temperature: true,
+      reasoning: true,
+      attachment: true,
+      toolcall: true,
+      input: { text: true, audio: false, image: true, video: false, pdf: true },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: { input: 0, output: 0 },
+    limit: { context: 200000, output: 32000 },
+    options: {},
+    headers: {},
+  })
+
+  test("re-roles text-only trailing assistant to user for claude-opus-4-6", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "MAX_STEPS hint" },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-opus-4-6"), {})
+    expect(result).toHaveLength(2)
+    expect(result[1].role).toBe("user")
+    expect(result[1].content).toBe("MAX_STEPS hint")
+  })
+
+  test("re-roles array text content trailing assistant to user", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: [{ type: "text", text: "summary" }] },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-sonnet-4.6-20260101"), {})
+    expect(result).toHaveLength(2)
+    expect(result[1].role).toBe("user")
+  })
+
+  test("strips trailing assistant with tool-call content (partial stream failure)", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "tc_1", toolName: "read", args: {} }] },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-opus-4-6"), {})
+    expect(result).toHaveLength(1)
+    expect(result[0].role).toBe("user")
+  })
+
+  test("preserves trailing assistant for claude-sonnet-4.5 (supports prefill)", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hi there" },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-sonnet-4.5-20250514"), {})
+    expect(result[result.length - 1].role).toBe("assistant")
+  })
+
+  test("preserves trailing assistant for claude-sonnet-4 (supports prefill)", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hi there" },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-sonnet-4-20250514"), {})
+    expect(result[result.length - 1].role).toBe("assistant")
+  })
+
+  test("preserves trailing assistant for claude-3-5-sonnet (supports prefill)", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hi there" },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-3-5-sonnet-20241022"), {})
+    expect(result[result.length - 1].role).toBe("assistant")
+  })
+
+  test("no-op when last message is already user", () => {
+    const msgs: any[] = [
+      { role: "assistant", content: "Hi" },
+      { role: "user", content: "Hello" },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-opus-4-6"), {})
+    expect(result).toHaveLength(2)
+    expect(result[result.length - 1].role).toBe("user")
+  })
+
+  test("works for openai-compatible provider with claude 4.6 model", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hi there" },
+    ]
+    const model = claudeModel("claude-opus-4-6", "@ai-sdk/openai-compatible", "my-proxy")
+    const result = ProviderTransform.message(msgs, model, {})
+    expect(result[1].role).toBe("user")
+    expect(result[1].content).toBe("Hi there")
+  })
+
+  test("preserves trailing assistant for non-claude model", () => {
+    const model = claudeModel("gpt-5.4")
+    model.family = "gpt"
+    model.api.id = "gpt-5.4"
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hi" },
+    ]
+    const result = ProviderTransform.message(msgs, model, {})
+    expect(result[result.length - 1].role).toBe("assistant")
+  })
+})
+// kilocode_change end

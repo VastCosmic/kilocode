@@ -46,11 +46,43 @@ export namespace ProviderTransform {
     return undefined
   }
 
+  // kilocode_change start - Claude 4.6 models do not support assistant message prefill
+  const CLAUDE_NO_PREFILL = ["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"]
+  export function supportsAssistantPrefill(model: Provider.Model): boolean {
+    const id = model.api.id.toLowerCase()
+    return !CLAUDE_NO_PREFILL.some((v) => id.includes(v))
+  }
+
+  function isTextOnlyContent(content: ModelMessage["content"]): boolean {
+    if (typeof content === "string") return true
+    if (!Array.isArray(content)) return false
+    return content.every((p) => p.type === "text" || p.type === "reasoning")
+  }
+
+  // Text-only trailing assistants (e.g. MAX_STEPS hint) are re-roled to "user"
+  // to preserve their instruction content. Trailing assistants with tool-call
+  // parts (e.g. from aborted turns or partial stream failures) are stripped.
+  function fixTrailingAssistant(msgs: ModelMessage[]): ModelMessage[] {
+    if (msgs.length === 0 || msgs[msgs.length - 1].role !== "assistant") return msgs
+    const last = msgs[msgs.length - 1]
+    if (isTextOnlyContent(last.content)) {
+      return [...msgs.slice(0, -1), { ...last, role: "user" as const }]
+    }
+    return msgs.slice(0, -1)
+  }
+  // kilocode_change end
+
   function normalizeMessages(
     msgs: ModelMessage[],
     model: Provider.Model,
     options: Record<string, unknown>,
   ): ModelMessage[] {
+    // kilocode_change start - fix trailing assistant messages for models that don't support prefill
+    if (!supportsAssistantPrefill(model)) {
+      msgs = fixTrailingAssistant(msgs)
+    }
+    // kilocode_change end
+
     // Anthropic rejects messages with empty content - filter out empty string messages
     // and remove empty text/reasoning parts from array content
     if (model.api.npm === "@ai-sdk/anthropic") {
