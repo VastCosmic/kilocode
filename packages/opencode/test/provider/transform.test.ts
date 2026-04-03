@@ -2889,5 +2889,58 @@ describe("ProviderTransform.message - fix trailing assistant for Claude 4.6", ()
     const result = ProviderTransform.message(msgs, model, {})
     expect(result[result.length - 1].role).toBe("assistant")
   })
+
+  test("strips reasoning parts when re-roling trailing assistant", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "Let me think..." },
+          { type: "text", text: "Here is my answer" },
+        ],
+      },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-opus-4-6"), {})
+    expect(result).toHaveLength(2)
+    expect(result[1].role).toBe("user")
+    expect(result[1].content).toEqual([{ type: "text", text: "Here is my answer" }])
+  })
+
+  test("strips trailing assistant with only reasoning content", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [{ type: "reasoning", text: "Thinking only, no text output" }],
+      },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-sonnet-4.6-20260101"), {})
+    expect(result).toHaveLength(1)
+    expect(result[0].role).toBe("user")
+    expect(result[0].content).toBe("Hello")
+  })
+
+  test("keeps all text parts and strips all reasoning parts when re-roling", () => {
+    const msgs: any[] = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "Step 1 thinking" },
+          { type: "text", text: "First answer" },
+          { type: "reasoning", text: "Step 2 thinking" },
+          { type: "text", text: "Second answer" },
+        ],
+      },
+    ]
+    const result = ProviderTransform.message(msgs, claudeModel("claude-opus-4-6"), {})
+    expect(result).toHaveLength(2)
+    expect(result[1].role).toBe("user")
+    expect(result[1].content).toEqual([
+      { type: "text", text: "First answer" },
+      { type: "text", text: "Second answer" },
+    ])
+  })
 })
 // kilocode_change end

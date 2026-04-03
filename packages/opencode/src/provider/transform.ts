@@ -60,12 +60,18 @@ export namespace ProviderTransform {
   }
 
   // Text-only trailing assistants (e.g. MAX_STEPS hint) are re-roled to "user"
-  // to preserve their instruction content. Trailing assistants with tool-call
+  // to preserve their instruction content; reasoning parts are stripped since
+  // they are invalid in user messages. Trailing assistants with tool-call
   // parts (e.g. from aborted turns or partial stream failures) are stripped.
   function fixTrailingAssistant(msgs: ModelMessage[]): ModelMessage[] {
     if (msgs.length === 0 || msgs[msgs.length - 1].role !== "assistant") return msgs
     const last = msgs[msgs.length - 1]
     if (isTextOnlyContent(last.content)) {
+      if (Array.isArray(last.content)) {
+        const textOnly = last.content.filter((p) => p.type !== "reasoning")
+        if (textOnly.length === 0) return msgs.slice(0, -1)
+        return [...msgs.slice(0, -1), { ...last, role: "user" as const, content: textOnly }]
+      }
       return [...msgs.slice(0, -1), { ...last, role: "user" as const }]
     }
     return msgs.slice(0, -1)
